@@ -1,51 +1,52 @@
 import abc
-import logging
 import json
+from http import HTTPStatus
+import logging
+import ssl
 import urllib.request
 import urllib.error
-import ssl
+
+from src.utilities.error_codes import FAILURE_ERROR_CODE, SUCCESS_ERROR_CODE
+# Access token should not be exposed in code and have hidden in temporary config file
+from src.utilities.image_upscale_config import IMAGE_UPSCALE_URL, ACCESS_TOKEN
 
 logging.basicConfig(level=logging.DEBUG)
+# Disable SSL certificate verification
+ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+ssl_context.verify_mode = ssl.CERT_NONE
 
 class AbstractImageUpscaleClient(abc.ABC):
     @abc.abstractmethod
-    def upscale_image(self, image: bytes, new_height: int, new_width: int) -> int:
+    def upscale_image(self, image: bytes, new_height: int, new_width: int) -> dict:
         pass
 
 class ImageUpscaleClient(AbstractImageUpscaleClient):
-    IMAGE_UPSCALE_URL = 'https://lazazaai00imgageresizer00.azurewebsites.net/api/upscale'
-    ACCESS_TOKEN = "sukanya_thapa"
-    HTTP_HEADER = {'Content-Type': 'application/json'}
 
-    def _send_upscale_request(self, request_body: dict) -> dict:
-        request_data = json.dumps(request_body).encode('utf-8')
-        request = urllib.request.Request(self.IMAGE_UPSCALE_URL, data=request_data, headers=self.HTTP_HEADER, method='POST')
+    def __init__(self):
+        self.image_upscale_url = IMAGE_UPSCALE_URL
+        self.__access_token = ACCESS_TOKEN
 
-        # Disable SSL certificate verification
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS)
-        ssl_context.verify_mode = ssl.CERT_NONE
+    def upscale_image(self, image: bytes, new_height: int, new_width: int):
 
-        with urllib.request.urlopen(request, context=ssl_context) as response:
-            response_data = response.read().decode('utf-8')
-            return json.loads(response_data)
-
-    def upscale_image(self, image: bytes, new_height: int, new_width: int) -> int:
+        HTTP_HEADER = {'Content-Type': 'application/json'}
         request_body = {
-            'access_token': self.ACCESS_TOKEN,
+            'access_token': self.__access_token,
             'new_height': new_height,
             'new_width': new_width,
             'base64_image': image
         }
+
+        request_data = json.dumps(request_body).encode('utf-8')
+        request = urllib.request.Request(self.image_upscale_url, data=request_data, headers=HTTP_HEADER, method='POST')
+
         try:
-            self._send_upscale_request(request_body)
-            return 0
+            with urllib.request.urlopen(request, context=ssl_context) as response:
+                response_data = response.read().decode('utf-8')
+                return {'image': json.loads(response_data), 'status_code': SUCCESS_ERROR_CODE}
         except urllib.error.HTTPError as err:
-            if err.code == 400:
-                logging.error(f"Invalid input: {err.read().decode('utf-8')}")
-            elif err.code == 500:
-                logging.error(f"Service unavailable: {err.read().decode('utf-8')}")
-            else:
-                logging.error(f"HTTP Error: {err.read().decode('utf-8')}")
+            logging.error(f"{HTTPStatus(err.code).phrase}: {err.read().decode('utf-8')}")
         except urllib.error.URLError as err:
             logging.error(f"Image Upscale Service Error: {err}")
-        return 1
+
+        return {'image': None, 'status_code': FAILURE_ERROR_CODE}
+
